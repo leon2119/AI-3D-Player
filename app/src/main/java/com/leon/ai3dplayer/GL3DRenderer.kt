@@ -20,7 +20,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
     private var imageTexId = 0
     private var surfaceTexture: SurfaceTexture? = null
 
-    @Volatile var depthStrength = 0.035f
+    @Volatile var depthStrength = 0.045f
     @Volatile var isImageMode = false
     @Volatile private var pendingDepthBitmap: Bitmap? = null
     @Volatile private var pendingImageBitmap: Bitmap? = null
@@ -46,7 +46,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
 
     private val fragmentShaderCode = """
         #extension GL_OES_EGL_image_external : require
-        precision mediump float;
+        precision highp float;
         varying vec2 vTexCoord;
         uniform samplerExternalOES uVideoTex;
         uniform sampler2D uImageTex;
@@ -54,18 +54,50 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         uniform float uDepthStrength;
         uniform int uUseImage;
 
+        float getSmoothDepth(vec2 uv) {
+            vec2 px = vec2(0.004, 0.004);
+            float d = texture2D(uDepthTex, uv).r * 0.4;
+            d += texture2D(uDepthTex, uv + vec2(px.x, 0.0)).r * 0.15;
+            d += texture2D(uDepthTex, uv - vec2(px.x, 0.0)).r * 0.15;
+            d += texture2D(uDepthTex, uv + vec2(0.0, px.y)).r * 0.15;
+            d += texture2D(uDepthTex, uv - vec2(0.0, px.y)).r * 0.15;
+            return d;
+        }
+
         void main() {
             float eyeSide = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
-            vec2 eyeUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
+            vec2 rawUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
 
-            float depth = texture2D(uDepthTex, eyeUV).r;
-            float shift = eyeSide * (depth - 0.5) * uDepthStrength;
-            vec2 shiftedUV = clamp(vec2(eyeUV.x + shift, eyeUV.y), 0.001, 0.999);
+            // Slight zoom (1.10x) so edge warping never leaves stretched borders
+            vec2 eyeUV = (rawUV - 0.5) * 0.90 + 0.5;
 
-            if (uUseImage == 1) {
-                gl_FragColor = texture2D(uImageTex, shiftedUV);
+            // Subtle 3D stereoscopic perspective tilt (toe-in camera angle)
+            float tilt = (eyeUV.x - 0.5) * eyeSide * (uDepthStrength * 0.45);
+            eyeUV.y = (eyeUV.y - 0.5) * (1.0 + tilt) + 0.5;
+
+            // Multi-step ray-marched depth parallax for true 3D volume
+            vec2 bestUV = eyeUV;
+            float maxDepth = -1.0;
+            for (int i = 0; i < 6; i++) {
+                float stepFrac = float(i) / 5.0;
+                vec2 sampleUV = eyeUV + vec2(eyeSide * (stepFrac - 0.5) * uDepthStrength, 0.0);
+                float d = getSmoothDepth(clamp(sampleUV, 0.002, 0.998));
+                if (d >= stepFrac && d > maxDepth) {
+                    maxDepth = d;
+                    bestUV = sampleUV;
+                }
+            }
+
+            float finalDepth = getSmoothDepth(clamp(bestUV, 0.002, 0.998));
+            float parallax = eyeSide * (finalDepth - 0.45) * uDepthStrength;
+            vec2 finalUV = vec2(eyeUV.x + parallax, eyeUV.y);
+
+            if (finalUV.x < 0.0 || finalUV.x > 1.0 || finalUV.y < 0.0 || finalUV.y > 1.0) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            } else if (uUseImage == 1) {
+                gl_FragColor = texture2D(uImageTex, finalUV);
             } else {
-                gl_FragColor = texture2D(uVideoTex, shiftedUV);
+                gl_FragColor = texture2D(uVideoTex, finalUV);
             }
         }
     """.trimIndent()
@@ -82,11 +114,11 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
             GLES20.glLinkProgram(it)
         }
 
-        val texIdq = IntArray(3)
-        GLES20.glGenTextures(3, texIdq, 0)
-        videoTexId = texIdq.component1()
-        depthTexId = texIdq.component2()
-        imageTexId = texIdq.component3()
+        val texIds = IntArray(3)
+        GLES20.glGenTextures(3, texIds, 0)
+        videoTexId = texIds.component1()
+        depthTexId = texIds.component2()
+        imageTexId = texIds.component3()
 
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
@@ -135,7 +167,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVideoTex"), 0)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, depthTexId)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uDepthTex"), 1)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
