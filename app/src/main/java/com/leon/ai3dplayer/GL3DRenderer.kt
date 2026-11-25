@@ -135,7 +135,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVideoTex"), 0)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1	
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, depthTexId)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uDepthTex"), 1)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
