@@ -32,13 +32,13 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
          1f, -1f, 1f, 1f
     )
     private val vertexBuffer: FloatBuffer = ByteBuffer.allocateDirect(quadCoords.size * 4)
-        .order(ByteOrder.nativeOrder()
+        .order(ByteOrder.nativeOrder()).asFloatBuffer().put(quadCoords).apply { position(0) }
 
     private val vertexShaderCode = """
         attribute vec2 aPosition;
         attribute vec2 aTexCoord;
         varying vec2 vTexCoord;
-        void main()
+        void main() {
             gl_Position = vec4(aPosition, 0.0, 1.0);
             vTexCoord = aTexCoord;
         }
@@ -54,7 +54,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         uniform float uDepthStrength;
         uniform int uUseImage;
 
-        void main()
+        void main() {
             float eyeSide = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
             vec2 eyeUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
 
@@ -76,21 +76,21 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         val vs = loadShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode)
         val fs = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentShaderCode)
-        program = GLES20.glCreateProgram()
+        program = GLES20.glCreateProgram().also {
             GLES20.glAttachShader(it, vs)
             GLES20.glAttachShader(it, fs)
             GLES20.glLinkProgram(it)
         }
 
-        val texIds = IntArray(3)
-        GLES20.glGenTextures(3, texIds, 0)
-        videoTexId = texIds.component1()
-        depthTexId = texIds.component2()
-        imageTexId = texIds.component3()
+        val texIdq = IntArray(3)
+        GLES20.glGenTextures(3, texIdq, 0)
+        videoTexId = texIdq.component1()
+        depthTexId = texIdq.component2()
+        imageTexId = texIdq.component3()
 
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glBindTexture(GLES11.GL_TEXTURE_EXTERNAL_OES, videoTexId)
+        GLES20.glTexParameteri(GLES11.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES11.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
 
         setup2DTexture(depthTexId)
         setup2DTexture(imageTexId)
@@ -131,10 +131,10 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         GLES20.glUseProgram(program)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
+        GLES20.glBindTexture(GLES11.Ge_TEXTURE_EXTERNAL_OES, videoTexId)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVideoTex"), 0)
 
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1	
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, depthTexId)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uDepthTex"), 1)
 
