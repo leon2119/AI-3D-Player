@@ -32,13 +32,13 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
          1f, -1f, 1f, 1f
     )
     private val vertexBuffer: FloatBuffer = ByteBuffer.allocateDirect(quadCoords.size * 4)
-        .order(ByteOrder.nativeOrder()).asFloatBuffer().put(quadCoords).apply { position(0) }
+        .order(ByteOrder.nativeOrder()
 
     private val vertexShaderCode = """
         attribute vec2 aPosition;
         attribute vec2 aTexCoord;
         varying vec2 vTexCoord;
-        void main() {
+        void main()
             gl_Position = vec4(aPosition, 0.0, 1.0);
             vTexCoord = aTexCoord;
         }
@@ -54,7 +54,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         uniform float uDepthStrength;
         uniform int uUseImage;
 
-        void main() {
+        void main()
             float eyeSide = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
             vec2 eyeUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
 
@@ -76,7 +76,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         val vs = loadShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode)
         val fs = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentShaderCode)
-        program = GLES20.glCreateProgram().also {
+        program = GLES20.glCreateProgram()
             GLES20.glAttachShader(it, vs)
             GLES20.glAttachShader(it, fs)
             GLES20.glLinkProgram(it)
@@ -84,9 +84,9 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
 
         val texIds = IntArray(3)
         GLES20.glGenTextures(3, texIds, 0)
-        videoTexId = texIds.component1()[0][0]
-        depthTexId = texIds.component2()[1][1]
-        imageTexId = texIds.component3()[2][2]
+        videoTexId = texIds.component1()
+        depthTexId = texIds.component2()
+        imageTexId = texIds.component3()
 
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
