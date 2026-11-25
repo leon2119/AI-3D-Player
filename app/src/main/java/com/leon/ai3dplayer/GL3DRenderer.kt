@@ -84,9 +84,9 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
 
         val texIds = IntArray(3)
         GLES20.glGenTextures(3, texIds, 0)
-        videoTexId = texIds[0]
-        depthTexId = texIds[1]
-        imageTexId = texIds[2]
+        videoTexId = texIds[0][0]
+        depthTexId = texIds[1][1]
+        imageTexId = texIds[2][2]
 
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
