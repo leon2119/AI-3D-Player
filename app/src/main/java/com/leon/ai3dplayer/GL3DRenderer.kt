@@ -88,9 +88,9 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         depthTexId = texIdq.component2()
         imageTexId = texIdq.component3()
 
-        GLES20.glBindTexture(GLES11.GL_TEXTURE_EXTERNAL_OES, videoTexId)
-        GLES20.glTexParameteri(GLES11.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES11.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
 
         setup2DTexture(depthTexId)
         setup2DTexture(imageTexId)
@@ -131,7 +131,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         GLES20.glUseProgram(program)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11.Ge_TEXTURE_EXTERNAL_OES, videoTexId)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVideoTex"), 0)
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1	
