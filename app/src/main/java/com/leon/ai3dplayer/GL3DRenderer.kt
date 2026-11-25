@@ -1,0 +1,168 @@
+package com.leon.ai3dplayer
+
+import android.graphics.Bitmap
+import android.graphics.SurfaceTexture
+import android.opengl.GLES11Ext
+import android.opengl.GLES20
+import android.opengl.GLSurfaceView
+import android.opengl.GLUtils
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.FloatBuffer
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
+
+class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSurfaceView.Renderer {
+
+    private var program = 0
+    private var videoTexId = 0
+    private var depthTexId = 0
+    private var imageTexId = 0
+    private var surfaceTexture: SurfaceTexture? = null
+
+    @Volatile var depthStrength = 0.035f
+    @Volatile var isImageMode = false
+    @Volatile private var pendingDepthBitmap: Bitmap? = null
+    @Volatile private var pendingImageBitmap: Bitmap? = null
+
+    private val quadCoords = floatArrayOf(
+        -1f,  1f, 0f, 0f,
+        -1f, -1f, 0f, 1f,
+         1f,  1f, 1f, 0f,
+         1f, -1f, 1f, 1f
+    )
+    private val vertexBuffer: FloatBuffer = ByteBuffer.allocateDirect(quadCoords.size * 4)
+        .order(ByteOrder.nativeOrder()).asFloatBuffer().put(quadCoords).apply { position(0) }
+
+    private val vertexShaderCode = """
+        attribute vec2 aPosition;
+        attribute vec2 aTexCoord;
+        varying vec2 vTexCoord;
+        void main() {
+            gl_Position = vec4(aPosition, 0.0, 1.0);
+            vTexCoord = aTexCoord;
+        }
+    """.trimIndent()
+
+    private val fragmentShaderCode = """
+        #extension GL_OES_EGL_image_external : require
+        precision mediump float;
+        varying vec2 vTexCoord;
+        uniform samplerExternalOES uVideoTex;
+        uniform sampler2D uImageTex;
+        uniform sampler2D uDepthTex;
+        uniform float uDepthStrength;
+        uniform int uUseImage;
+
+        void main() {
+            float eyeSide = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
+            vec2 eyeUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
+
+            float depth = texture2D(uDepthTex, eyeUV).r;
+            float shift = eyeSide * (depth - 0.5) * uDepthStrength;
+            vec2 shiftedUV = clamp(vec2(eyeUV.x + shift, eyeUV.y), 0.001, 0.999);
+
+            if (uUseImage == 1) {
+                gl_FragColor = texture2D(uImageTex, shiftedUV);
+            } else {
+                gl_FragColor = texture2D(uVideoTex, shiftedUV);
+            }
+        }
+    """.trimIndent()
+
+    fun updateDepthMap(bmp: Bitmap) { pendingDepthBitmap = bmp }
+    fun setStaticImage(bmp: Bitmap) { isImageMode = true; pendingImageBitmap = bmp }
+
+    override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        val vs = loadShader(GLES20.GL_VERTEX_SHADER, vertexShaderCode)
+        val fs = loadShader(GLES20.GL_FRAGMENT_SHADER, fragmentShaderCode)
+        program = GLES20.glCreateProgram().also {
+            GLES20.glAttachShader(it, vs)
+            GLES20.glAttachShader(it, fs)
+            GLES20.glLinkProgram(it)
+        }
+
+        val texIds = IntArray(3)
+        GLES20.glGenTextures(3, texIds, 0)
+        videoTexId = texIds[0]
+        depthTexId = texIds[1]
+        imageTexId = texIds[2]
+
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+
+        setup2DTexture(depthTexId)
+        setup2DTexture(imageTexId)
+
+        surfaceTexture = SurfaceTexture(videoTexId).also { onSurfaceReady(it) }
+    }
+
+    private fun setup2DTexture(id: Int) {
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, id)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+    }
+
+    override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        GLES20.glViewport(0, 0, width, height)
+    }
+
+    override fun onDrawFrame(gl: GL10?) {
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        if (!isImageMode) {
+            surfaceTexture?.updateTexImage()
+        }
+
+        pendingDepthBitmap?.let {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, depthTexId)
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, it, 0)
+            pendingDepthBitmap = null
+        }
+
+        pendingImageBitmap?.let {
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, imageTexId)
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, it, 0)
+            pendingImageBitmap = null
+        }
+
+        GLES20.glUseProgram(program)
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVideoTex"), 0)
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, depthTexId)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uDepthTex"), 1)
+
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, imageTexId)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uImageTex"), 2)
+
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uDepthStrength"), depthStrength)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uUseImage"), if (isImageMode) 1 else 0)
+
+        val posHandle = GLES20.glGetAttribLocation(program, "aPosition")
+        val texHandle = GLES20.glGetAttribLocation(program, "aTexCoord")
+
+        vertexBuffer.position(0)
+        GLES20.glVertexAttribPointer(posHandle, 2, GLES20.GL_FLOAT, false, 16, vertexBuffer)
+        GLES20.glEnableVertexAttribArray(posHandle)
+
+        vertexBuffer.position(2)
+        GLES20.glVertexAttribPointer(texHandle, 2, GLES20.GL_FLOAT, false, 16, vertexBuffer)
+        GLES20.glEnableVertexAttribArray(texHandle)
+
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+    }
+
+    private fun loadShader(type: Int, code: String): Int {
+        return GLES20.glCreateShader(type).also {
+            GLES20.glShaderSource(it, code)
+            GLES20.glCompileShader(it)
+        }
+    }
+}
