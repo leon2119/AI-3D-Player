@@ -22,7 +22,7 @@ class DepthEstimator(context: Context) {
         try {
             gpuDelegate = GpuDelegate()
             options.addDelegate(gpuDelegate)
-        } catch (e: Exception) {
+        } catch (t: Throwable) {
             options.setNumThreads(4)
         }
         interpreter = Interpreter(model, options)
