@@ -17,6 +17,8 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
     private var program = 0
     private var videoTexId = 0
     private var depthTexId = 0
+    private var prevDepthTexId = 0
+    private var blendStartTime = 0L
     private var imageTexId = 0
     private var surfaceTexture: SurfaceTexture? = null
 
@@ -51,12 +53,15 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         uniform samplerExternalOES uVideoTex;
         uniform sampler2D uImageTex;
         uniform sampler2D uDepthTex;
+        uniform sampler2D uPrevDepthTex;
+        uniform float uBlend;
         uniform float uDepthStrength;
         uniform int uUseImage;
 
         float getSmoothDepth(vec2 uv) {
             vec2 px = vec2(0.012, 0.012);
-            float d = texture2D(uDepthTex, uv).r * 0.36;
+            float c0 = mix(texture2D(uPrevDepthTex, uv).r, texture2D(uDepthTex, uv).r, uBlend);
+            float d = c0 * 0.36;
             d += texture2D(uDepthTex, uv + vec2(px.x, 0.0)).r * 0.16;
             d += texture2D(uDepthTex, uv - vec2(px.x, 0.0)).r * 0.16;
             d += texture2D(uDepthTex, uv + vec2(0.0, px.y)).r * 0.16;
@@ -96,8 +101,9 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
             GLES20.glLinkProgram(it)
         }
 
-        val texIds = IntArray(3)
-        GLES20.glGenTextures(3, texIds, 0)
+        val texIds = IntArray(4)
+        GLES20.glGenTextures(4, texIds, 0)
+        prevDepthTexId = texIds.component4()
         videoTexId = texIds.component1()
         depthTexId = texIds.component2()
         imageTexId = texIds.component3()
@@ -107,6 +113,7 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
 
         setup2DTexture(depthTexId)
+        setup2DTexture(prevDepthTexId)
         setup2DTexture(imageTexId)
 
         surfaceTexture = SurfaceTexture(videoTexId).also { onSurfaceReady(it) }
@@ -131,8 +138,10 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         }
 
         pendingDepthBitmap?.let {
+            val tmp = prevDepthTexId; prevDepthTexId = depthTexId; depthTexId = tmp
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, depthTexId)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, it, 0)
+            blendStartTime = android.os.SystemClock.uptimeMillis()
             pendingDepthBitmap = null
         }
 
@@ -156,6 +165,11 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, imageTexId)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uImageTex"), 2)
 
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prevDepthTexId)
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uPrevDepthTex"), 3)
+        val blend = ((android.os.SystemClock.uptimeMillis() - blendStartTime) / 140f).coerceIn(0f, 1f)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uBlend"), blend)
         GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uDepthStrength"), depthStrength)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uUseImage"), if (isImageMode) 1 else 0)
 

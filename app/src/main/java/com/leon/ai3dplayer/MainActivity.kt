@@ -189,7 +189,7 @@ class MainActivity : AppCompatActivity() {
                     }, mainHandler)
                 } catch (_: Exception) { isProcessingAI = false }
             }
-            mainHandler.postDelayed(this, 100)
+            mainHandler.postDelayed(this, 140)
         }}, 500)
     }
 
