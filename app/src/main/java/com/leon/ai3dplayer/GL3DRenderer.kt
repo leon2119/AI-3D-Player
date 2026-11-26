@@ -55,43 +55,31 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         uniform int uUseImage;
 
         float getSmoothDepth(vec2 uv) {
-            vec2 px = vec2(0.004, 0.004);
-            float d = texture2D(uDepthTex, uv).r * 0.4;
-            d += texture2D(uDepthTex, uv + vec2(px.x, 0.0)).r * 0.15;
-            d += texture2D(uDepthTex, uv - vec2(px.x, 0.0)).r * 0.15;
-            d += texture2D(uDepthTex, uv + vec2(0.0, px.y)).r * 0.15;
-            d += texture2D(uDepthTex, uv - vec2(0.0, px.y)).r * 0.15;
+            vec2 px = vec2(0.012, 0.012);
+            float d = texture2D(uDepthTex, uv).r * 0.36;
+            d += texture2D(uDepthTex, uv + vec2(px.x, 0.0)).r * 0.16;
+            d += texture2D(uDepthTex, uv - vec2(px.x, 0.0)).r * 0.16;
+            d += texture2D(uDepthTex, uv + vec2(0.0, px.y)).r * 0.16;
+            d += texture2D(uDepthTex, uv - vec2(0.0, px.y)).r * 0.16;
             return d;
         }
 
         void main() {
             float eyeSide = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
             vec2 rawUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
-            vec2 eyeUV = (rawUV - 0.5) * 0.90 + 0.5;
 
-            vec2 bestUV = eyeUV;
-            float maxDepth = -1.0;
-            for (int i = 0; i < 6; i++) {
-                float stepFrac = float(i) / 5.0;
-                vec2 sampleUV = vec2(eyeUV.x + eyeSide * (stepFrac - 0.5) * uDepthStrength, eyeUV.y);
-                float d = getSmoothDepth(clamp(sampleUV, 0.002, 0.998));
-                if (d >= stepFrac && d > maxDepth) {
-                    maxDepth = d;
-                    bestUV = sampleUV;
-                }
-            }
+            // Gentle 1.05x zoom to hide borders; Y stays 100% level
+            vec2 eyeUV = (rawUV - 0.5) * 0.95 + 0.5;
 
-            float finalDepth = getSmoothDepth(clamp(bestUV, 0.002, 0.998));
-            float parallax = eyeSide * (finalDepth - 0.45) * uDepthStrength;
-            vec2 finalUV = vec2(eyeUV.x + parallax, eyeUV.y);
+            // Smooth horizontal depth shift (no dark edge shadows, no warping tears)
+            float depth = getSmoothDepth(clamp(eyeUV, 0.005, 0.995));
+            float parallax = eyeSide * (depth - 0.5) * uDepthStrength;
+            vec2 finalUV = clamp(vec2(eyeUV.x + parallax, eyeUV.y), 0.002, 0.998);
 
-            if (finalUV.x < 0.0 || finalUV.x > 1.0 || finalUV.y < 0.0 || finalUV.y > 1.0) {
-                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            if (uUseImage == 1) {
+                gl_FragColor = texture2D(uImageTex, finalUV);
             } else {
-                vec4 col = (uUseImage == 1) ? texture2D(uImageTex, finalUV) : texture2D(uVideoTex, finalUV);
-                float edgeGrad = abs(getSmoothDepth(clamp(finalUV + vec2(0.005, 0.0), 0.002, 0.998)) - finalDepth);
-                col.rgb *= (1.0 - clamp(edgeGrad * 1.4, 0.0, 0.18));
-                gl_FragColor = col;
+                gl_FragColor = texture2D(uVideoTex, finalUV);
             }
         }
     """.trimIndent()
