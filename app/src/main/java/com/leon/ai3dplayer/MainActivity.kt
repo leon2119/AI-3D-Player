@@ -95,103 +95,64 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         instance = this; is3DActive = true; depthEstimator = DepthEstimator(this)
         val root = FrameLayout(this)
-
-        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                controlsPanel.visibility = if (controlsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-                return true
-            }
+        val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { controlsPanel.visibility = if (controlsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE; return true }
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
                 if (renderer.isImageMode && folderImages.size > 1 && e1 != null && abs(e2.x - e1.x) > 100 && abs(vx) > 150) {
                     currentImageIndex = if (e2.x < e1.x) (currentImageIndex + 1) % folderImages.size else (currentImageIndex - 1 + folderImages.size) % folderImages.size
                     loadMediaUri(folderImages[currentImageIndex], scanFolder = false)
                     Toast.makeText(this@MainActivity, "Image ${currentImageIndex + 1} / ${folderImages.size}", Toast.LENGTH_SHORT).show()
                     return true
-                }
-                return false
+                }; return false
             }
         })
-
-        // Hidden TextureView receives clean raw frames for AI (zero feedback loop!)
-        val rawSamplerView = TextureView(this).apply { alpha = 0.01f }
-        root.addView(rawSamplerView, FrameLayout.LayoutParams(256, 256))
-
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
-            renderer = GL3DRenderer { st ->
-                mainHandler.post {
-                    player = ExoPlayer.Builder(this@MainActivity).build().apply {
-                        setVideoSurface(Surface(st))
-                        repeatMode = ExoPlayer.REPEAT_MODE_ALL
-                    }
-                    startLoops(rawSamplerView)
-                    handleIncomingIntent(intent)
-                }
-            }
+            renderer = GL3DRenderer(
+                onSurfaceReady = { st -> mainHandler.post { player = ExoPlayer.Builder(this@MainActivity).build().apply { setVideoSurface(Surface(st)); repeatMode = ExoPlayer.REPEAT_MODE_ALL }; startTimerLoop(); handleIncomingIntent(intent) } },
+                onCleanFrameReady = { bmp -> aiExecutor.execute { depthEstimator?.estimateDepth(bmp)?.let { renderer.updateDepthMap(it) }; renderer.isAiBusy = false } }
+            )
             setRenderer(renderer); renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
-            setOnTouchListener { _, ev -> gestureDetector.onTouchEvent(ev); true }
+            setOnTouchListener { _, ev -> gd.onTouchEvent(ev); true }
         }
         root.addView(glView)
-
-        controlsPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setBackgroundColor(0xAA000000.toInt()); setPadding(28, 14, 28, 14) }
-        val timelineRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        controlsPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setBackgroundColor(0xAA000000.toInt()); setPadding(24, 12, 24, 12) }
+        val tRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         timeText = TextView(this).apply { text = "00:00 / 00:00"; setTextColor(0xFFFFFFFF.toInt()) }
         videoSeekBar = SeekBar(this).apply {
-            max = 1000; layoutParams = LinearLayout.LayoutParams(650, LinearLayout.LayoutParams.WRAP_CONTENT)
+            max = 1000; layoutParams = LinearLayout.LayoutParams(620, -2)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) { if (u && (player?.duration ?: 0L) > 0) player?.seekTo((player!!.duration * p) / 1000L) }
-                override fun onStartTrackingTouch(sb: SeekBar?) { isUserSeeking = true }
-                override fun onStopTrackingTouch(sb: SeekBar?) { isUserSeeking = false }
+                override fun onStartTrackingTouch(sb: SeekBar?) { isUserSeeking = true }; override fun onStopTrackingTouch(sb: SeekBar?) { isUserSeeking = false }
             })
         }
-        timelineRow.addView(timeText); timelineRow.addView(videoSeekBar)
-
-        val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val pickBtn = Button(this).apply { text = "Open File"; setOnClickListener { pickMedia.launch("*/*") } }
+        tRow.addView(timeText); tRow.addView(videoSeekBar)
+        val bRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val pickBtn = Button(this).apply { text = "Open"; setOnClickListener { pickMedia.launch("*/*") } }
         playPauseBtn = Button(this).apply { text = "Pause"; setOnClickListener { player?.let { if (it.isPlaying) { it.pause(); text = "Play" } else { it.play(); text = "Pause" } } } }
         val stopBtn = Button(this).apply { text = "Stop"; setOnClickListener { player?.let { it.pause(); it.seekTo(0); playPauseBtn.text = "Play"; videoSeekBar.progress = 0 } } }
-        val dLabel = TextView(this).apply { text = "  3D Depth: "; setTextColor(0xFFFFFFFF.toInt()) }
+        val modeBtn = Button(this).apply { text = "Cross-Eye"; setOnClickListener { renderer.isCrossEye = !renderer.isCrossEye; text = if (renderer.isCrossEye) "Cross-Eye" else "VR Mode" } }
+        val dLabel = TextView(this).apply { text = " Depth: "; setTextColor(0xFFFFFFFF.toInt()) }
         val dSlider = SeekBar(this).apply {
-            max = 60; progress = 20; layoutParams = LinearLayout.LayoutParams(280, LinearLayout.LayoutParams.WRAP_CONTENT)
+            max = 60; progress = 22; layoutParams = LinearLayout.LayoutParams(220, -2)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) { renderer.depthStrength = p / 1000f }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {}
+                override fun onStartTrackingTouch(sb: SeekBar?) {}; override fun onStopTrackingTouch(sb: SeekBar?) {}
             })
         }
-        btnRow.addView(pickBtn); btnRow.addView(playPauseBtn); btnRow.addView(stopBtn); btnRow.addView(dLabel); btnRow.addView(dSlider)
-        controlsPanel.addView(timelineRow); controlsPanel.addView(btnRow)
+        bRow.addView(pickBtn); bRow.addView(playPauseBtn); bRow.addView(stopBtn); bRow.addView(modeBtn); bRow.addView(dLabel); bRow.addView(dSlider)
+        controlsPanel.addView(tRow); controlsPanel.addView(bRow)
         root.addView(controlsPanel, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         setContentView(root)
         window.insetsController?.let { it.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars()); it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
     }
-
     private fun formatTime(ms: Long): String { val s = ms.coerceAtLeast(0L) / 1000L; return String.format(Locale.US, "%02d:%02d", s / 60L, s % 60L) }
-
-    private fun startLoops(rawView: TextureView) {
+    private fun startTimerLoop() {
         mainHandler.postDelayed(object : Runnable { override fun run() {
-            player?.let { if (!renderer.isImageMode && !isUserSeeking && it.duration > 0) { videoSeekBar.progress = ((it.currentPosition * 1000L) / it.duration).toInt(); timeText.text = "${formatTime(it.currentPosition)} / ${formatTime(it.duration)}" } }
-            mainHandler.postDelayed(this, 300)
-        }}, 300)
-        mainHandler.postDelayed(object : Runnable { override fun run() {
-            if (!renderer.isImageMode && player?.isPlaying == true && !isProcessingAI && glView.width > 0) {
-                isProcessingAI = true
-                // Capture ONLY the Left Eye half (0..width/2) so AI never sees a double-split image!
-                val fullBmp = Bitmap.createBitmap(glView.width / 2, glView.height, Bitmap.Config.ARGB_8888)
-                try {
-                    PixelCopy.request(glView, Rect(0, 0, glView.width / 2, glView.height), fullBmp, { r ->
-                        if (r == PixelCopy.SUCCESS) {
-                            aiExecutor.execute {
-                                depthEstimator?.estimateDepth(fullBmp)?.let { renderer.updateDepthMap(it) }
-                                isProcessingAI = false
-                            }
-                        } else isProcessingAI = false
-                    }, mainHandler)
-                } catch (_: Exception) { isProcessingAI = false }
-            }
-            mainHandler.postDelayed(this, 140)
-        }}, 500)
+            val p = player; renderer.isPlayingVideo = (p?.isPlaying == true)
+            if (p != null && !renderer.isImageMode && !isUserSeeking && p.duration > 0) { videoSeekBar.progress = ((p.currentPosition * 1000L) / p.duration).toInt(); timeText.text = "${formatTime(p.currentPosition)} / ${formatTime(p.duration)}" }
+            mainHandler.postDelayed(this, 200)
+        }}, 200)
     }
-
     override fun onDestroy() { super.onDestroy(); is3DActive = false; instance = null; player?.release(); depthEstimator?.close() }
 }
