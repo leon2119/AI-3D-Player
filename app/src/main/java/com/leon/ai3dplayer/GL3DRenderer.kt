@@ -27,10 +27,8 @@ class GL3DRenderer(
     private val readBuf: ByteBuffer = ByteBuffer.allocateDirect(256 * 256 * 4).order(ByteOrder.nativeOrder())
 
     private val vsCode = "attribute vec2 aPosition; attribute vec2 aTexCoord; varying vec2 vTexCoord; void main() { gl_Position = vec4(aPosition, 0.0, 1.0); vTexCoord = aTexCoord; }"
-    private val copyFsCode = "#extension GL_OES_EGL_image_external : require
-precision mediump float; varying vec2 vTexCoord; uniform samplerExternalOES uVideoTex; void main() { gl_FragColor = texture2D(uVideoTex, vec2(vTexCoord.x, 1.0 - vTexCoord.y)); }"
-
-    private val fsCode = """
+    private val copyFsCode = "#extension GL_OES_EGL_image_external : require\nprecision mediump float; varying vec2 vTexCoord; uniform samplerExternalOES uVideoTex; void main() { gl_FragColor = texture2D(uVideoTex, vec2(vTexCoord.x, 1.0 - vTexCoord.y)); }"
+private val fsCode = """
         #extension GL_OES_EGL_image_external : require
         precision highp float;
         varying vec2 vTexCoord;
@@ -135,7 +133,7 @@ precision mediump float; varying vec2 vTexCoord; uniform samplerExternalOES uVid
         val p = GLES20.glGetAttribLocation(prog, "aPosition"); val t = GLES20.glGetAttribLocation(prog, "aTexCoord")
         vertexBuffer.position(0); GLES20.glVertexAttribPointer(p, 2, GLES20.GL_FLOAT, false, 16, vertexBuffer); GLES20.glEnableVertexAttribArray(p)
         vertexBuffer.position(2); GLES20.glVertexAttribPointer(t, 2, GLES20.GL_FLOAT, false, 16, vertexBuffer); GLES20.glEnableVertexAttribArray(t)
-        GLES20.glDrawArrays(GLES20.gl_TRIANGLE_STRIP, 0, 4)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     }
 
     private fun buildProg(v: String, f: String): Int = GLES20.glCreateProgram().also {
