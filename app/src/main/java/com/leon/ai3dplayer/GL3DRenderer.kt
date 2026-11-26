@@ -39,13 +39,36 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
         attribute vec2 aTexCoord;
         varying vec2 vTexCoord;
         void main() {
+            gl_Position = vec4(aPosition, 0.0, 1.0);
+            vTexCoord = aTexCoord;
+        }
+    """.trimIndent()
+
+    private val fragmentShaderCode = """
+        #extension GL_OES_EGL_image_external : require
+        precision highp float;
+        varying vec2 vTexCoord;
+        uniform samplerExternalOES uVideoTex;
+        uniform sampler2D uImageTex;
+        uniform sampler2D uDepthTex;
+        uniform float uDepthStrength;
+        uniform int uUseImage;
+
+        float getSmoothDepth(vec2 uv) {
+            vec2 px = vec2(0.004, 0.004);
+            float d = texture2D(uDepthTex, uv).r * 0.4;
+            d += texture2D(uDepthTex, uv + vec2(px.x, 0.0)).r * 0.15;
+            d += texture2D(uDepthTex, uv - vec2(px.x, 0.0)).r * 0.15;
+            d += texture2D(uDepthTex, uv + vec2(0.0, px.y)).r * 0.15;
+            d += texture2D(uDepthTex, uv - vec2(0.0, px.y)).r * 0.15;
+            return d;
+        }
+
+        void main() {
             float eyeSide = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
             vec2 rawUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
-
-            // 1.10x zoom hides edge warping; Y stays strictly level (zero vertical tilt)
             vec2 eyeUV = (rawUV - 0.5) * 0.90 + 0.5;
 
-            // Multi-step horizontal ray-march for smooth 3D curves (limbs, faces, hair)
             vec2 bestUV = eyeUV;
             float maxDepth = -1.0;
             for (int i = 0; i < 6; i++) {
@@ -66,7 +89,6 @@ class GL3DRenderer(private val onSurfaceReady: (SurfaceTexture) -> Unit) : GLSur
                 gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
             } else {
                 vec4 col = (uUseImage == 1) ? texture2D(uImageTex, finalUV) : texture2D(uVideoTex, finalUV);
-                // Subtle side-edge shading on curved surfaces for stronger 3D volume
                 float edgeGrad = abs(getSmoothDepth(clamp(finalUV + vec2(0.005, 0.0), 0.002, 0.998)) - finalDepth);
                 col.rgb *= (1.0 - clamp(edgeGrad * 1.4, 0.0, 0.18));
                 gl_FragColor = col;
