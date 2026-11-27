@@ -19,6 +19,7 @@ class GL3DRenderer(
 
     @Volatile var depthStrength = 0.022f; @Volatile var isCrossEye = true
     @Volatile var isImageMode = false; @Volatile var isPlayingVideo = false; @Volatile var isAiBusy = false
+    @Volatile var mediaAspect = 16f / 9f
     @Volatile private var pendingDepthBitmap: Bitmap? = null
     @Volatile private var pendingImageBitmap: Bitmap? = null
 
@@ -28,7 +29,8 @@ class GL3DRenderer(
 
     private val vsCode = "attribute vec2 aPosition; attribute vec2 aTexCoord; varying vec2 vTexCoord; void main() { gl_Position = vec4(aPosition, 0.0, 1.0); vTexCoord = aTexCoord; }"
     private val copyFsCode = "#extension GL_OES_EGL_image_external : require\nprecision mediump float; varying vec2 vTexCoord; uniform samplerExternalOES uVideoTex; void main() { gl_FragColor = texture2D(uVideoTex, vec2(vTexCoord.x, 1.0 - vTexCoord.y)); }"
-private val fsCode = """
+
+    private val fsCode = """
         #extension GL_OES_EGL_image_external : require
         precision highp float;
         varying vec2 vTexCoord;
@@ -40,6 +42,7 @@ private val fsCode = """
         uniform float uDepthStrength;
         uniform float uEyeDir;
         uniform int uUseImage;
+        uniform vec2 uAspectScale;
 
         float getSmoothDepth(vec2 uv) {
             vec2 px = vec2(0.012, 0.012);
@@ -55,7 +58,12 @@ private val fsCode = """
         void main() {
             float side = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
             vec2 rawUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
-            vec2 eyeUV = (rawUV - 0.5) * 0.94 + 0.5;
+            vec2 fittedUV = (rawUV - 0.5) * uAspectScale + 0.5;
+            if (fittedUV.x < 0.0 || fittedUV.x > 1.0 || fittedUV.y < 0.0 || fittedUV.y > 1.0) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                return;
+            }
+            vec2 eyeUV = (fittedUV - 0.5) * 0.94 + 0.5;
             float depth = getSmoothDepth(clamp(eyeUV, 0.005, 0.995));
             float parallax = side * uEyeDir * (depth - 0.45) * uDepthStrength;
             vec2 finalUV = clamp(vec2(eyeUV.x + parallax, eyeUV.y), 0.002, 0.998);
@@ -64,7 +72,7 @@ private val fsCode = """
     """.trimIndent()
 
     fun updateDepthMap(bmp: Bitmap) { pendingDepthBitmap = bmp }
-    fun setStaticImage(bmp: Bitmap) { isImageMode = true; pendingImageBitmap = bmp }
+    fun setStaticImage(bmp: Bitmap) { isImageMode = true; mediaAspect = bmp.width.toFloat() / bmp.height.coerceAtLeast(1); pendingImageBitmap = bmp }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         program = buildProg(vsCode, fsCode); copyProgram = buildProg(vsCode, copyFsCode)
@@ -118,6 +126,10 @@ private val fsCode = """
             pendingImageBitmap = null
         }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); GLES20.glUseProgram(program)
+        val halfScreenAspect = (viewW * 0.5f) / viewH.coerceAtLeast(1)
+        val sx = if (mediaAspect > halfScreenAspect) 1.0f else halfScreenAspect / mediaAspect
+        val sy = if (mediaAspect > halfScreenAspect) mediaAspect / halfScreenAspect else 1.0f
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uAspectScale"), sx, sy)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, videoTexId); GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uVideoTex"), 0)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, depthTexId); GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uDepthTex"), 1)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, imageTexId); GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uImageTex"), 2)

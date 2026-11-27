@@ -3,7 +3,6 @@ package com.leon.ai3dplayer
 import android.content.ContentUris
 import android.content.Intent
 import android.graphics.*
-import android.media.ImageReader
 import android.net.Uri
 import android.opengl.GLSurfaceView
 import android.os.*
@@ -12,8 +11,12 @@ import android.view.*
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
@@ -28,17 +31,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var timeText: TextView
     private var player: ExoPlayer? = null
     private var depthEstimator: DepthEstimator? = null
-    private var imageReader: ImageReader? = null
     private val aiExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var isProcessingAI = false
     private var isUserSeeking = false
     private var folderImages = listOf<Uri>()
     private var currentImageIndex = -1
-    private var lastDepthTime = 0L
 
-    private val pickMedia = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri?.let { loadMediaUri(it, scanFolder = true) }
+    private val pickMedia = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let {
+            try { contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+            loadMediaUri(it, scanFolder = true)
+        }
     }
 
     private fun loadMediaUri(uri: Uri, scanFolder: Boolean) {
@@ -64,23 +67,32 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadSiblingImages(uri: Uri) {
         aiExecutor.execute {
+            val list = mutableListOf<Uri>()
             try {
-                var bucketId: String? = null
-                contentResolver.query(uri, arrayOf(MediaStore.Images.Media.BUCKET_ID), null, null, null)?.use { c ->
-                    if (c.moveToFirst()) bucketId = c.getString(0)
+                if (uri.scheme == "file" && uri.path != null) {
+                    val parent = File(uri.path!!).parentFile
+                    parent?.listFiles()?.filter { it.extension.lowercase(Locale.US) in listOf("jpg","jpeg","png","webp") }
+                        ?.sortedBy { it.name.lowercase(Locale.US) }?.forEach { list.add(Uri.fromFile(it)) }
+                } else {
+                    val doc = DocumentFile.fromSingleUri(this, uri)
+                    doc?.parentFile?.listFiles()?.filter { it.type?.startsWith("image/") == true }
+                        ?.sortedBy { it.name?.lowercase(Locale.US) }?.forEach { list.add(it.uri) }
                 }
-                val list = mutableListOf<Uri>()
-                val sel = if (bucketId != null) "${MediaStore.Images.Media.BUCKET_ID} = ?" else null
-                val args = if (bucketId != null) arrayOf(bucketId!!) else null
-                contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID), sel, args, "${MediaStore.Images.Media.DATE_ADDED} DESC")?.use { c ->
-                    val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                    while (c.moveToNext()) list.add(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(idCol)))
-                }
-                if (list.isNotEmpty()) {
-                    folderImages = list
-                    currentImageIndex = list.indexOfFirst { it == uri || it.lastPathSegment == uri.lastPathSegment }.coerceAtLeast(0)
+                if (list.isEmpty()) {
+                    var bucketId: String? = null
+                    contentResolver.query(uri, arrayOf(MediaStore.Images.Media.BUCKET_ID), null, null, null)?.use { c -> if (c.moveToFirst()) bucketId = c.getString(0) }
+                    val sel = if (bucketId != null) "${MediaStore.Images.Media.BUCKET_ID} = ?" else null
+                    val args = if (bucketId != null) arrayOf(bucketId!!) else null
+                    contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID), sel, args, "${MediaStore.Images.Media.DISPLAY_NAME} ASC")?.use { c ->
+                        val col = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                        while (c.moveToNext()) list.add(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(col)))
+                    }
                 }
             } catch (_: Exception) {}
+            if (list.isNotEmpty()) {
+                folderImages = list
+                currentImageIndex = list.indexOfFirst { it == uri || it.lastPathSegment == uri.lastPathSegment }.coerceAtLeast(0)
+            }
         }
     }
 
@@ -93,29 +105,49 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         instance = this; is3DActive = true; depthEstimator = DepthEstimator(this)
         val root = FrameLayout(this)
+
         val gd = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean { controlsPanel.visibility = if (controlsPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE; return true }
             override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-                if (renderer.isImageMode && folderImages.size > 1 && e1 != null && abs(e2.x - e1.x) > 100 && abs(vx) > 150) {
-                    currentImageIndex = if (e2.x < e1.x) (currentImageIndex + 1) % folderImages.size else (currentImageIndex - 1 + folderImages.size) % folderImages.size
-                    loadMediaUri(folderImages[currentImageIndex], scanFolder = false)
-                    Toast.makeText(this@MainActivity, "Image ${currentImageIndex + 1} / ${folderImages.size}", Toast.LENGTH_SHORT).show()
+                if (renderer.isImageMode && e1 != null && abs(e2.x - e1.x) > 80) {
+                    if (folderImages.size > 1) {
+                        currentImageIndex = if (e2.x < e1.x) (currentImageIndex + 1) % folderImages.size else (currentImageIndex - 1 + folderImages.size) % folderImages.size
+                        loadMediaUri(folderImages[currentImageIndex], scanFolder = false)
+                        Toast.makeText(this@MainActivity, "Image ${currentImageIndex + 1} / ${folderImages.size}", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this@MainActivity, "Only 1 image accessible in this folder", Toast.LENGTH_SHORT).show()
+                    }
                     return true
-                }; return false
+                }
+                return false
             }
         })
+
         glView = GLSurfaceView(this).apply {
             setEGLContextClientVersion(2)
             renderer = GL3DRenderer(
-                onSurfaceReady = { st -> mainHandler.post { player = ExoPlayer.Builder(this@MainActivity).build().apply { setVideoSurface(Surface(st)); repeatMode = ExoPlayer.REPEAT_MODE_ALL }; startTimerLoop(); handleIncomingIntent(intent) } },
+                onSurfaceReady = { st -> mainHandler.post {
+                    player = ExoPlayer.Builder(this@MainActivity).build().apply {
+                        setVideoSurface(Surface(st)); repeatMode = ExoPlayer.REPEAT_MODE_ALL
+                        addListener(object : Player.Listener {
+                            override fun onVideoSizeChanged(vs: VideoSize) {
+                                if (vs.width > 0 && vs.height > 0) renderer.mediaAspect = vs.width.toFloat() / vs.height
+                            }
+                        })
+                    }
+                    startTimerLoop(); handleIncomingIntent(intent)
+                } },
                 onCleanFrameReady = { bmp -> aiExecutor.execute { depthEstimator?.estimateDepth(bmp)?.let { renderer.updateDepthMap(it) }; renderer.isAiBusy = false } }
             )
             setRenderer(renderer); renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
-            setOnTouchListener { _, ev -> gd.onTouchEvent(ev); true }
+            setOnTouchListener { _, ev -> gd.onTouchEvent(ev) }
         }
         root.addView(glView)
+
         controlsPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setBackgroundColor(0xAA000000.toInt()); setPadding(24, 12, 24, 12) }
         val tRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         timeText = TextView(this).apply { text = "00:00 / 00:00"; setTextColor(0xFFFFFFFF.toInt()) }
@@ -127,8 +159,9 @@ class MainActivity : AppCompatActivity() {
             })
         }
         tRow.addView(timeText); tRow.addView(videoSeekBar)
+
         val bRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val pickBtn = Button(this).apply { text = "Open"; setOnClickListener { pickMedia.launch("*/*") } }
+        val pickBtn = Button(this).apply { text = "Open"; setOnClickListener { pickMedia.launch(arrayOf("video/*", "image/*")) } }
         playPauseBtn = Button(this).apply { text = "Pause"; setOnClickListener { player?.let { if (it.isPlaying) { it.pause(); text = "Play" } else { it.play(); text = "Pause" } } } }
         val stopBtn = Button(this).apply { text = "Stop"; setOnClickListener { player?.let { it.pause(); it.seekTo(0); playPauseBtn.text = "Play"; videoSeekBar.progress = 0 } } }
         val modeBtn = Button(this).apply { text = "Cross-Eye"; setOnClickListener { renderer.isCrossEye = !renderer.isCrossEye; text = if (renderer.isCrossEye) "Cross-Eye" else "VR Mode" } }
@@ -146,6 +179,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
         window.insetsController?.let { it.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars()); it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
     }
+
     private fun formatTime(ms: Long): String { val s = ms.coerceAtLeast(0L) / 1000L; return String.format(Locale.US, "%02d:%02d", s / 60L, s % 60L) }
     private fun startTimerLoop() {
         mainHandler.postDelayed(object : Runnable { override fun run() {
