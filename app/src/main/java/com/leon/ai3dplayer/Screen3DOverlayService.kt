@@ -48,9 +48,13 @@ class Screen3DOverlayService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun setupOverlay(code: Int, data: Intent, w: Int, h: Int, dpi: Int) {
+    private fun setupOverlay(code: Int, data: Intent, w0: Int, h0: Int, dpi: Int) {
         val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         projection = mpm.getMediaProjection(code, data)
+
+        // Ensure landscape dimensions for VR goggles
+        val w = maxOf(w0, h0)
+        val h = minOf(w0, h0)
 
         lateinit var renderer: GL3DRenderer
         glView = GLSurfaceView(this).apply {
@@ -75,15 +79,25 @@ class Screen3DOverlayService : Service() {
 
         overlayRoot = FrameLayout(this).apply { addView(glView) }
         val passFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-        val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, passFlags, PixelFormat.TRANSLUCENT)
+        val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, passFlags, PixelFormat.OPAQUE).apply {
+            screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            try {
+                val f = WindowManager.LayoutParams::class.java.getField("privateFlags")
+                f.setInt(this, f.getInt(this) or 0x00000080)
+            } catch (_: Exception) {}
+        }
         wm?.addView(overlayRoot, lp)
 
         stopPill = Button(this).apply {
-            text = "Exit 3D"; alpha = 0.65f
+            text = "Exit 3D"; alpha = 0.75f
             setOnClickListener { stopSelf() }
         }
         val btnLp = WindowManager.LayoutParams(-2, -2, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            try {
+                val f = WindowManager.LayoutParams::class.java.getField("privateFlags")
+                f.setInt(this, f.getInt(this) or 0x00000080)
+            } catch (_: Exception) {}
         }
         wm?.addView(stopPill, btnLp)
     }
