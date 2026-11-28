@@ -68,30 +68,34 @@ class MainActivity : AppCompatActivity() {
     private fun loadSiblingImages(uri: Uri) {
         aiExecutor.execute {
             val list = mutableListOf<Uri>()
+            var targetName: String? = null
             try {
-                if (uri.scheme == "file" && uri.path != null) {
-                    val parent = File(uri.path!!).parentFile
-                    parent?.listFiles()?.filter { it.extension.lowercase(Locale.US) in listOf("jpg","jpeg","png","webp") }
-                        ?.sortedBy { it.name.lowercase(Locale.US) }?.forEach { list.add(Uri.fromFile(it)) }
-                } else {
-                    val doc = DocumentFile.fromSingleUri(this, uri)
-                    doc?.parentFile?.listFiles()?.filter { it.type?.startsWith("image/") == true }
-                        ?.sortedBy { it.name?.lowercase(Locale.US) }?.forEach { list.add(it.uri) }
+                contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) targetName = c.getString(0)
                 }
-                if (list.isEmpty()) {
-                    var bucketId: String? = null
-                    contentResolver.query(uri, arrayOf(MediaStore.Images.Media.BUCKET_ID), null, null, null)?.use { c -> if (c.moveToFirst()) bucketId = c.getString(0) }
-                    val sel = if (bucketId != null) "${MediaStore.Images.Media.BUCKET_ID} = ?" else null
-                    val args = if (bucketId != null) arrayOf(bucketId!!) else null
-                    contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID), sel, args, "${MediaStore.Images.Media.DISPLAY_NAME} ASC")?.use { c ->
-                        val col = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                        while (c.moveToNext()) list.add(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(col)))
+                if (targetName == null) targetName = uri.lastPathSegment?.substringAfterLast("/")
+                var bucketId: String? = null
+                if (targetName != null) {
+                    contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media.BUCKET_ID), "${MediaStore.Images.Media.DISPLAY_NAME} = ?", arrayOf(targetName!!), null)?.use { c ->
+                        if (c.moveToFirst()) bucketId = c.getString(0)
+                    }
+                }
+                val sel = if (bucketId != null) "${MediaStore.Images.Media.BUCKET_ID} = ?" else null
+                val args = if (bucketId != null) arrayOf(bucketId!!) else null
+                contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME), sel, args, "${MediaStore.Images.Media.DISPLAY_NAME} ASC")?.use { c ->
+                    val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
+                    val nameCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+                    var idx = 0
+                    while (c.moveToNext()) {
+                        list.add(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, c.getLong(idCol)))
+                        if (targetName != null && c.getString(nameCol) == targetName) currentImageIndex = idx
+                        idx++
                     }
                 }
             } catch (_: Exception) {}
             if (list.isNotEmpty()) {
                 folderImages = list
-                currentImageIndex = list.indexOfFirst { it == uri || it.lastPathSegment == uri.lastPathSegment }.coerceAtLeast(0)
+                if (currentImageIndex !in list.indices) currentImageIndex = 0
             }
         }
     }
@@ -106,6 +110,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        requestPermissions(arrayOf(android.Manifest.permission.READ_MEDIA_IMAGES, android.Manifest.permission.READ_EXTERNAL_STORAGE), 101)
         instance = this; is3DActive = true; depthEstimator = DepthEstimator(this)
         val root = FrameLayout(this)
 
@@ -164,16 +169,25 @@ class MainActivity : AppCompatActivity() {
         val pickBtn = Button(this).apply { text = "Open"; setOnClickListener { pickMedia.launch(arrayOf("video/*", "image/*")) } }
         playPauseBtn = Button(this).apply { text = "Pause"; setOnClickListener { player?.let { if (it.isPlaying) { it.pause(); text = "Play" } else { it.play(); text = "Pause" } } } }
         val stopBtn = Button(this).apply { text = "Stop"; setOnClickListener { player?.let { it.pause(); it.seekTo(0); playPauseBtn.text = "Play"; videoSeekBar.progress = 0 } } }
-        val modeBtn = Button(this).apply { text = "Cross-Eye"; setOnClickListener { renderer.isCrossEye = !renderer.isCrossEye; text = if (renderer.isCrossEye) "Cross-Eye" else "VR Mode" } }
-        val dLabel = TextView(this).apply { text = " Depth: "; setTextColor(0xFFFFFFFF.toInt()) }
+        val modeNames = listOf("K4 Goggles", "Cross-Eye", "VR Full")
+        val modeBtn = Button(this).apply { text = "K4 Goggles"; setOnClickListener { renderer.viewMode = (renderer.viewMode + 1) % 3; text = modeNames[renderer.viewMode] } }
+        val dLabel = TextView(this).apply { text = " Depth:"; setTextColor(0xFFFFFFFF.toInt()) }
         val dSlider = SeekBar(this).apply {
-            max = 60; progress = 22; layoutParams = LinearLayout.LayoutParams(220, -2)
+            max = 60; progress = 22; layoutParams = LinearLayout.LayoutParams(160, -2)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) { renderer.depthStrength = p / 1000f }
                 override fun onStartTrackingTouch(sb: SeekBar?) {}; override fun onStopTrackingTouch(sb: SeekBar?) {}
             })
         }
-        bRow.addView(pickBtn); bRow.addView(playPauseBtn); bRow.addView(stopBtn); bRow.addView(modeBtn); bRow.addView(dLabel); bRow.addView(dSlider)
+        val sLabel = TextView(this).apply { text = " IPD:"; setTextColor(0xFFFFFFFF.toInt()) }
+        val sSlider = SeekBar(this).apply {
+            max = 45; progress = 25; layoutParams = LinearLayout.LayoutParams(160, -2)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, u: Boolean) { renderer.eyeSpacing = (55 + p) / 100f }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}; override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        bRow.addView(pickBtn); bRow.addView(playPauseBtn); bRow.addView(stopBtn); bRow.addView(modeBtn); bRow.addView(dLabel); bRow.addView(dSlider); bRow.addView(sLabel); bRow.addView(sSlider)
         controlsPanel.addView(tRow); controlsPanel.addView(bRow)
         root.addView(controlsPanel, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         setContentView(root)

@@ -17,7 +17,8 @@ class GL3DRenderer(
     private var surfaceTexture: SurfaceTexture? = null
     private var viewW = 1; private var viewH = 1; private var lastCaptureTime = 0L; private var blendStartTime = 0L
 
-    @Volatile var depthStrength = 0.022f; @Volatile var isCrossEye = true
+    @Volatile var depthStrength = 0.022f; @Volatile var viewMode = 0 // 0=K4 Goggles, 1=Cross-Eye, 2=VR Full
+    @Volatile var eyeSpacing = 0.80f
     @Volatile var isImageMode = false; @Volatile var isPlayingVideo = false; @Volatile var isAiBusy = false
     @Volatile var mediaAspect = 16f / 9f
     @Volatile private var pendingDepthBitmap: Bitmap? = null
@@ -43,6 +44,7 @@ class GL3DRenderer(
         uniform float uEyeDir;
         uniform int uUseImage;
         uniform vec2 uAspectScale;
+        uniform float uEyeSpacing;
 
         float getSmoothDepth(vec2 uv) {
             vec2 px = vec2(0.012, 0.012);
@@ -57,7 +59,10 @@ class GL3DRenderer(
 
         void main() {
             float side = (vTexCoord.x < 0.5) ? -1.0 : 1.0;
-            vec2 rawUV = vec2(fract(vTexCoord.x * 2.0), vTexCoord.y);
+            float panelCenter = (side < 0.0) ? (0.5 - 0.25 * uEyeSpacing) : (0.5 + 0.25 * uEyeSpacing);
+            float halfW = 0.25 * uEyeSpacing;
+            if (abs(vTexCoord.x - panelCenter) > halfW) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
+            vec2 rawUV = vec2((vTexCoord.x - (panelCenter - halfW)) / (2.0 * halfW), vTexCoord.y);
             vec2 fittedUV = (rawUV - 0.5) * uAspectScale + 0.5;
             if (fittedUV.x < 0.0 || fittedUV.x > 1.0 || fittedUV.y < 0.0 || fittedUV.y > 1.0) {
                 gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -126,7 +131,8 @@ class GL3DRenderer(
             pendingImageBitmap = null
         }
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); GLES20.glUseProgram(program)
-        val halfScreenAspect = (viewW * 0.5f) / viewH.coerceAtLeast(1)
+        val activeSpacing = if (viewMode == 0) eyeSpacing else 1.0f
+        val halfScreenAspect = (viewW * 0.5f * activeSpacing) / viewH.coerceAtLeast(1)
         val sx = if (mediaAspect > halfScreenAspect) 1.0f else halfScreenAspect / mediaAspect
         val sy = if (mediaAspect > halfScreenAspect) mediaAspect / halfScreenAspect else 1.0f
         GLES20.glUniform2f(GLES20.glGetUniformLocation(program, "uAspectScale"), sx, sy)
@@ -136,7 +142,8 @@ class GL3DRenderer(
         GLES20.glActiveTexture(GLES20.GL_TEXTURE3); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prevDepthTexId); GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uPrevDepthTex"), 3)
         GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uBlend"), ((now - blendStartTime) / 120f).coerceIn(0f, 1f))
         GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uDepthStrength"), depthStrength)
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uEyeDir"), if (isCrossEye) -1.0f else 1.0f)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uEyeSpacing"), activeSpacing)
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(program, "uEyeDir"), if (viewMode == 1) -1.0f else 1.0f)
         GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "uUseImage"), if (isImageMode) 1 else 0)
         drawQuad(program)
     }
