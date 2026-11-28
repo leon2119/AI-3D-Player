@@ -206,8 +206,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onStartTrackingTouch(sb: SeekBar?) {}; override fun onStopTrackingTouch(sb: SeekBar?) {}
             })
         }
-        val ovBtn = Button(this).apply { text = "Overlay 3D"; setOnClickListener { launchOverlayMode() } }
-        bRow.addView(pickBtn); bRow.addView(ovBtn); bRow.addView(playPauseBtn); bRow.addView(stopBtn); bRow.addView(modeBtn); bRow.addView(dLabel); bRow.addView(dSlider); bRow.addView(sLabel); bRow.addView(sSlider)
+        bRow.addView(pickBtn); bRow.addView(playPauseBtn); bRow.addView(stopBtn); bRow.addView(modeBtn); bRow.addView(dLabel); bRow.addView(dSlider); bRow.addView(sLabel); bRow.addView(sSlider)
         controlsPanel.addView(tRow); controlsPanel.addView(bRow)
         root.addView(controlsPanel, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         setContentView(root)
