@@ -22,7 +22,7 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
-    companion object { var is3DActive = false; var instance: MainActivity? = null }
+    companion object { var is3DActive = false; var instance: MainActivity? = null; var savedViewMode = 0; var savedDepth = 0.022f; var savedIpd = 0.80f }
     private lateinit var glView: GLSurfaceView
     private lateinit var renderer: GL3DRenderer
     private lateinit var controlsPanel: LinearLayout
@@ -36,6 +36,25 @@ class MainActivity : AppCompatActivity() {
     private var isUserSeeking = false
     private var folderImages = listOf<Uri>()
     private var currentImageIndex = -1
+
+    private val screenCapLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        if (res.resultCode == RESULT_OK && res.data != null) {
+            savedViewMode = renderer.viewMode; savedDepth = renderer.depthStrength; savedIpd = renderer.eyeSpacing
+            val svc = Intent(this, Screen3DOverlayService::class.java).putExtra("code", res.resultCode).putExtra("data", res.data)
+            startForegroundService(svc)
+            moveTaskToBack(true)
+        }
+    }
+
+    fun launchOverlayMode() {
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            Toast.makeText(this, "Allow Display over other apps, then tap Overlay 3D again", Toast.LENGTH_LONG).show()
+            return
+        }
+        val mpm = getSystemService(MEDIA_PROJECTION_SERVICE) as android.media.projection.MediaProjectionManager
+        screenCapLauncher.launch(mpm.createScreenCaptureIntent())
+    }
 
     private val pickMedia = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         uri?.let {
@@ -187,7 +206,8 @@ class MainActivity : AppCompatActivity() {
                 override fun onStartTrackingTouch(sb: SeekBar?) {}; override fun onStopTrackingTouch(sb: SeekBar?) {}
             })
         }
-        bRow.addView(pickBtn); bRow.addView(playPauseBtn); bRow.addView(stopBtn); bRow.addView(modeBtn); bRow.addView(dLabel); bRow.addView(dSlider); bRow.addView(sLabel); bRow.addView(sSlider)
+        val ovBtn = Button(this).apply { text = "Overlay 3D"; setOnClickListener { launchOverlayMode() } }
+        bRow.addView(pickBtn); bRow.addView(ovBtn); bRow.addView(playPauseBtn); bRow.addView(stopBtn); bRow.addView(modeBtn); bRow.addView(dLabel); bRow.addView(dSlider); bRow.addView(sLabel); bRow.addView(sSlider)
         controlsPanel.addView(tRow); controlsPanel.addView(bRow)
         root.addView(controlsPanel, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         setContentView(root)
